@@ -2,145 +2,209 @@ const config = require(`${__config_dir}/app.config.json`);
 const {debug} = config;
 const mysql = new(require(`${__class_dir}/mariadb.class.js`))(config.db);
 const Joi =  require('joi');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const jwtSecretKey = "secret";
 
 class _task{
-    add(data){
+    async addTask(userId, data) {
+        try {
+            const schema = Joi.object({
+                item: Joi.string().required()
+            });
+            const validation = schema.validate(data);
+            if (validation.error) {
+                const errorDetails = validation.error.details.map((detail) => detail.message);
+                return {
+                    status: false,
+                    code: 422,
+                    error: errorDetails.join(', ')
+                };
+            }
 
-        // Validate data
-        const schema = Joi.object({
-            item: Joi.string()
-        }).options({
-            abortEarly: false
-        })
-        const validation = schema.validate(data)
-        if(validation.error){
-            const errorDetails = validation.error.details.map((detail)=>{
-                detail.message
-            })
+            const query = 'INSERT INTO tasks (user_id, item) VALUES (?, ?)';
+            const result = await mysql.query(query, [userId, data.item]);
 
+            if (result.affectedRows > 0) {
+                return {
+                    status: true,
+                    message: 'Task added successfully'
+                };
+            } else {
+                return {
+                    status: false,
+                    message: 'Unable to add task'
+                };
+            }
+        } catch (error) {
+            console.error('addTask Error: ', error);
             return {
                 status: false,
-                code: 422,
-                error: errorDetails.join(', ')
+                message: 'An error occurred while adding the task'
+            };
+        }
+    }
+
+    async getTasks(userId) {
+        try {
+            const query = 'SELECT * FROM tasks WHERE user_id = ?';
+            const tasks = await mysql.query(query, [userId]);
+            return {
+                status: true,
+                data: tasks
+            };
+        } catch (error) {
+            if (debug) {
+                console.error('getTasks Error: ', error);
             }
-        }
-
-        // Insert data to database
-        const sql = {
-            query: `INSERT INTO task (items) VALUES (?)`,
-            params: [data.item]
-        }
-
-        return mysql.query(sql.query, sql.params)
-            .then(data=>{
-                return {
-                    status: true,
-                    data
-                }
-            })
-            .catch(error =>{
-                if (debug){
-                    console.error('add task Error: ', error)
-                }
-
-                return{
-                    status: false,
-                    error
-                }
-            })
-    }
-
-    show(){
-        const sql = {
-            query: `SELECT * FROM task`
-        }
-        return mysql.query(sql.query, sql.params)
-            .then(data=>{
-                return {
-                    status: true,
-                    data
-                }
-            })
-            .catch(error =>{
-                if (debug){
-                    console.error('show task Error: ', error)
-                }
-
-                return{
-                    status: false,
-                    error
-                }
-            })
-    }
-
-    update(id,data){
-        const schema = Joi.object({
-            // id: Joi.number(),
-            item: Joi.string()
-        }).options({
-            abortEarly: false
-        })
-
-        const validation = schema.validate(data)
-        if(validation.error){
-            const errorDetails = validation.error.details.map((detail)=>{
-                return detail.message
-            })
-
             return {
                 status: false,
-                code: 422,
-                error: errorDetails.join(', ')
-            }
+                error
+            };
         }
+    }
+    
 
-        const sql = {
-            query: `UPDATE task SET items = ? WHERE id = ?`,
-            params: [data.item, id]
-        }
-        return mysql.query(sql.query, sql.params)
-            .then(data=>{
+    async updateTask(userId, taskId, updatedData) {
+        try {
+            const schema = Joi.object({
+                item: Joi.string().required()
+            });
+            const validation = schema.validate(updatedData);
+            if (validation.error) {
+                const errorDetails = validation.error.details.map(detail => detail.message);
+                return {
+                    status: false,
+                    code: 422,
+                    error: errorDetails.join(', ')
+                };
+            }
+
+            const query = 'UPDATE tasks SET item = ?, updatedat = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?';
+            const result = await mysql.query(query, [updatedData.item, taskId, userId]);
+            if (result.affectedRows > 0) {
                 return {
                     status: true,
-                    data,
                     message: 'Task updated successfully'
-                }
-            })
-            .catch(error =>{
-                if (debug){
-                    console.error('updated task Error: ', error)
-                }
-
-                return{
+                };
+            } else {
+                return {
                     status: false,
-                    error
-                }
-            })
+                    message: 'Task not found or unable to update'
+                };
+            }
+        } catch (error) {
+            if (debug) {
+                console.error('updateTask Error: ', error);
+            }
+            return {
+                status: false,
+                error
+            };
+        }
     }
 
-    delete(id){        
-        const sql = {
-            query: `DELETE FROM task WHERE id = ?`,
-            params: [id]
-        }
-        return mysql.query(sql.query, sql.params)
-            .then(data=>{
+    async deleteTask(userId, taskId) {
+        try {
+            const taskQuery = 'SELECT * FROM tasks WHERE id = ? AND user_id = ?';
+            const task = await mysql.query(taskQuery, [taskId, userId]);
+    
+            if (task.length === 0) {
+                return {
+                    status: false,
+                    message: 'Task not found or unauthorized'
+                };
+            }
+    
+            const deleteQuery = 'DELETE FROM tasks WHERE id = ? AND user_id = ?';
+            const result = await mysql.query(deleteQuery, [taskId, userId]);
+    
+            if (result.affectedRows > 0) {
                 return {
                     status: true,
-                    data,
                     message: 'Task deleted successfully'
-                }
-            })
-            .catch(error =>{
-                if (debug){
-                    console.error('delete task Error: ', error)
-                }
-
-                return{
+                };
+            } else {
+                return {
                     status: false,
-                    error
-                }
-            })
+                    message: 'Task not found or unable to delete'
+                };
+            }
+        } catch (error) {
+            console.error('deleteTask Error: ', error);
+            return {
+                status: false,
+                message: 'An error occurred while deleting the task'
+            };
+        }
+    }
+    
+
+    async registerUser(username, password) {
+        try {
+            const hash = await bcrypt.hash(password, 10);
+            const query = 'INSERT INTO users (username, password_hash) VALUES (?, ?)';
+            const result = await mysql.query(query, [username, hash]);
+
+            if (result.affectedRows > 0) {
+                return {
+                    status: true,
+                    message: 'User registered successfully'
+                };
+            } else {
+                return {
+                    status: false,
+                    message: 'User registration failed'
+                };
+            }
+        } catch (error) {
+            if (debug) {
+                console.error('registerUser Error: ', error);
+            }
+            return {
+                status: false,
+                error
+            };
+        }
+    }
+
+    async loginUser(username, password) {
+        try {
+            const query = 'SELECT * FROM users WHERE username = ?';
+            const user = await mysql.query(query, [username]);
+            const userId = user[0].id;
+
+            if (user.length === 0) {
+                return {
+                    status: false,
+                    message: 'User not found'
+                };
+            }
+
+            const isPasswordMatch = await bcrypt.compare(password, user[0].password_hash);
+            if (isPasswordMatch) {
+                // const token = jwt.sign({ username }, jwtSecretKey);
+                const token = jwt.sign({ userId }, jwtSecretKey, { expiresIn: '1h' });
+                return {
+                    status: true,
+                    message: 'Login successful',
+                    token
+                };
+            } else {
+                return {
+                    status: false,
+                    message: 'Incorrect password'
+                };
+            }
+        } catch (error) {
+            if (debug) {
+                console.error('loginUser Error: ', error);
+            }
+            return {
+                status: false,
+                error
+            };
+        }
     }
 
 }
